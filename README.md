@@ -17,7 +17,7 @@ failures. The policies are memoryless: no repetition history.
 | `sym.h` | 8-fold symmetry reduction and precomputed successor graph over canonical positions |
 | `tb.c` | KQK DTM and KQKR DTC/DTM tablebases (`./tb`, ~20 s; gives max DTC 31, max DTM 35) |
 | `feat.h` | evaluation features |
-| `pol.c` | `./pol [-r] depth feat=w ...`: depth-d minimax on a linear eval, then exact verification (`-r` = every tied best move must also win); runs on the symmetry-reduced graph |
+| `pol.c` | `./pol [-r] [-f3] [-v [-v]] depth feat=w ...`: depth-d minimax on a linear eval, then exact verification (`-r` = every tied best move must also win; `-f3` = desperado ladder rule; `-v -v` = list all failures); runs on the symmetry-reduced graph |
 | `adv.c` | "advice" policy: force a strict drop of a potential V within K moves |
 | `abs.c` | optimal potential over an abstraction (e.g. two-king squares) via greedy level peeling |
 | `tune.py` | coordinate descent on eval weights; objective = exact failure count |
@@ -56,6 +56,7 @@ Defender-option features:
 | `-7cd + 6kk + 4qk - 3rk + mob + 4ed` | 6 | 48 | 42 (robust) |
 | `-7cd + 8kk + 4qk - 3rk - 3rkm + mob + ed` | 7 | **44** | 42 (robust) |
 | `-7cd + 8kk + 4qk - 4qkm - 4rk - 2rkm + mob + ed` | 8 | **40** (canonical tie-break; not robust) | 38 |
+| 14-term defender eval (below) + desperado ladder rule | 14 + rule | **36** (canonical tie-break; not robust) | 40 |
 | additive LUT fit to DTC | 2,595 | >44 (16 failures at 44) | – |
 
 Close misses (non-robust, canonical tie-break): the 6-term eval at 44 plies has 160 failures.
@@ -88,6 +89,47 @@ or "boxed in and the rook can check" (`desp`) backfires. `desp` fires in 56k won
 every 3k drawn ones, and boxing the king in is also how most mates happen. Any weight large
 enough to matter adds hundreds of thousands of failures. Coordinate descent with both in the
 pool stays at 8.
+
+Banning those moves outright (`pol -f`) is also a disaster: 266,604 failures at 36 plies. A
+stricter ban (`-f2`) only flags a rook check if White can't take the rook into a won KQK. It
+fixes the trap but still fails 1,968 positions at 36 plies. It fires on 18k won and 22k drawn
+Black-to-move positions. Whether the checks eventually run out depends on geometry several moves
+ahead, which no test of the current position can see.
+
+### Desperado ladder (`pol -f3`, `tune36f3.log`, `tune34f3.log`)
+
+This works like reading a ladder in go: a narrow, forcing search that can go deep cheaply. Once
+the black king has no moves, Black's only useful moves are rook checks, and White's only moves are
+check evasions. `ladder()` in `pol.c` solves that restricted game exactly, as a fixpoint over the
+move graph. It uses no KQKR tablebase, only KQK. White escapes if one of these happens:
+
+* Black runs out of checks.
+* White takes the rook into a won KQK.
+* The king gets unboxed without the queen hanging to the rook.
+
+Positions from which Black can check forever are banned as White move targets.
+
+The queen-hanging condition matters. Without it, blocking with the queen (Qc2 … Rh4+ Qh7 Rxh7)
+counts as an escape, and the rule misses the original trap. Boxed-in Black-to-move positions,
+canonical counts:
+
+| | tablebase won | tablebase drawn |
+|---|---|---|
+| ladder: White escapes | 3,477 | 424 |
+| ladder: perpetual | **0** | 3,056 |
+
+The rule never bans a winning move, and it catches 88% of the desperado draws. The longest
+escape is 8 plies. With the ban on, the 14-term eval above reaches 0 failures at 38 plies.
+Re-tuning at 36 plies with `-f3` gives:
+
+`-26cd + 21kk + 16qk - 8qkm - 15rk - 8rkm + 4mob + 3ed + co + box + 3kqk - wkc + rmob - 3kreg` + ladder rule
+
+| plies | 30 | 32 | 34 | 36 | 38 | 40 |
+|---|---|---|---|---|---|---|
+| failures | 120,084 | 78,208 | 1,184 | **0** | 16 | 0 |
+
+Without the ladder rule the same weights have 224 failures at 36 plies. With `-r` there are 576,
+so the result depends on tie-breaking. A tuner pass at 34 plies stalled at 232 failures.
 
 ## What does *not* work (and why)
 

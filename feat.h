@@ -57,10 +57,31 @@ static inline int kregion(int wk, int wq, int bk, int br) {
   }
   return __builtin_popcountll(reg) - 1;
 }
+// Stricter desperado test (black to move, king boxed in): the rook has a check on a square where
+// no White capture of it reaches a won KQK (capture impossible, or every capture draws).
+static inline int desp2(int wk, int wq, int bk, int br) {
+  if (bkmob(wk, wq, bk, br) || bk_in_check(wk, wq, bk, br)) return 0;
+  for (int d = 0; d < 4; d++) {
+    int f = F(br), r = R(br);
+    for (;;) {
+      f += DF[d], r += DR[d];
+      if (f < 0 || f > 7 || r < 0 || r > 7) break;
+      int t = r * 8 + f;
+      if (t == bk || t == wk || t == wq) break;
+      if (qatt(wq, bk, BIT(wk) | BIT(t))) continue;
+      if (!ratt(t, wk, BIT(wq) | BIT(bk))) continue;
+      int win = 0;  // can White take the checking rook into a won KQK?
+      if (adj(wk, t) && !adj(bk, t) && k3B[IDX3(t, wq, bk)] != 255) win = 1;
+      if (qatt(wq, t, BIT(wk) | BIT(bk)) && !adj(bk, t) && k3B[IDX3(wk, t, bk)] != 255) win = 1;
+      if (!win) return 1;
+    }
+  }
+  return 0;
+}
 static const char *FNAMES[] = {"cd",  "kk",   "kkm",  "rk",  "qk",   "mob", "ed", "co",
                                "box", "rkm",  "qkm",  "wkc", "wkcd", "tb",  "rkk", "one", "lut", "kqk",
-                               "rmob", "rsafe", "rchk", "rqa", "kreg", "bkst", "desp", 0};
-enum { NF = 25 };
+                               "rmob", "rsafe", "rchk", "rqa", "kreg", "bkst", "desp", "desp2", 0};
+enum { NF = 26 };
 static int W8[NF], USE[NF], nuse;
 
 static inline int lut(int wk, int wq, int bk, int br);
@@ -97,6 +118,7 @@ static inline int feat(int k, int wk, int wq, int bk, int br, int stm) {
     case 24:  // desperado rook: king boxed in and the rook is checking or can check (capture = stalemate)
       return bkmob(wk, wq, bk, br) == 0 && !bk_in_check(wk, wq, bk, br) &&
              (wk_in_check(wk, wq, bk, br) || rookopt(wk, wq, bk, br, 4) > 0);
+    case 25: return stm == 1 && desp2(wk, wq, bk, br);
   }
   return 0;
 }

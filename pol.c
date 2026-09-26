@@ -1,7 +1,10 @@
 // Policy harness: White plays argmin of a depth-d minimax over a linear eval of features;
 // then an exact fixpoint over all positions checks the policy wins against EVERY defence.
 // Runs on the 8-fold symmetry-reduced successor graph (sym.h); results are reported for the full board.
-// usage: ./pol [-r] [-v] depth feat=weight ...   (-r: adversarial tie-breaking, -v: examples)
+// usage: ./pol [-r] [-v] [-f] depth feat=weight ...
+//   -r: adversarial tie-breaking, -v: examples (-v -v: all failures),
+//   -f / -f2: forbid White moves that box the black king in while the rook can check (desp / desp2 rule)
+//   -f3: forbid moves into a desperado "ladder" that White cannot escape (see ladder())
 #include "kq.h"
 #include <math.h>
 
@@ -18,7 +21,11 @@ static int TBQ = 1;
 static inline int adjterm(int v) { return v < TERM ? v + 1 : v; }
 
 // value of a white move child (compact B index or G_CONV / G_BAD)
-static inline int wchild(int ch, const int32_t *tb) { return ch >= 0 ? tb[ch] : ch == G_CONV ? CAPW : INF; }
+static int forbid_feat = 24;
+static uint8_t *forbid;  // B positions White may not move into (-f), or NULL
+static inline int wchild(int ch, const int32_t *tb) {
+  return ch >= 0 ? (forbid && forbid[ch] ? INF : tb[ch]) : ch == G_CONV ? CAPW : INF;
+}
 
 static void sweepB(const int32_t *tw, int32_t *tb) {  // B value = max over black replies
 #pragma omp parallel for schedule(dynamic, 4096)
@@ -60,10 +67,89 @@ static const char *sq(int s) {
   return p;
 }
 
+// Desperado ladder: once the black king has no moves, Black's only useful moves are rook checks
+// and White's only moves are check evasions. Solve that narrow game exactly (like reading a go
+// ladder): White escapes if Black runs out of checks, the black king is unboxed without the queen
+// hanging, or White can take the rook into a won KQK. Positions from which Black can keep checking forever are marked in
+// forbid[]. No KQKR tablebase is used, only the move graph and KQK.
+static void ladder(void) {
+  uint8_t *boxed = calloc(NC, 1), *incheck = calloc(NC, 1), *lb = malloc(NC), *lw = malloc(NC);
+#pragma omp parallel for schedule(dynamic, 4096)
+  for (int c = 0; c < NC; c++) {
+    CUNPACK(c);
+    if (legB[c] && !(legB[c] & L_MATE)) boxed[c] = bkmob(wk, wq, bk, br) == 0;
+    if (legW[c]) incheck[c] = wk_in_check(wk, wq, bk, br);
+  }
+  memset(lb, 255, NC), memset(lw, 255, NC);
+  for (int c = 0; c < NC; c++) {
+    if (legB[c] && !boxed[c]) {  // ladder over: normal play resumes, unless the rook can take the queen
+      int hang = 0;
+      for (uint32_t j = offB[c]; j < offB[c + 1]; j++) hang |= chB[j] == G_BAD;
+      if (!hang) lb[c] = 0;
+    }
+    if (legW[c] && !incheck[c]) lw[c] = 0;  // Black gave up checking: White has a free move
+  }
+  int mx = 0;
+  for (int n = 1; n < 250; n++) {
+    long ch = 0;
+#pragma omp parallel for schedule(dynamic, 4096) reduction(+ : ch)
+    for (int c = 0; c < NC; c++) {
+      if (!incheck[c] || lw[c] != 255) continue;
+      for (uint32_t j = offW[c]; j < offW[c + 1]; j++) {
+        int m = chW[j];
+        if (m == G_CONV || (m >= 0 && lb[m] <= n - 1)) { lw[c] = n, ch++; break; }
+      }
+    }
+#pragma omp parallel for schedule(dynamic, 4096) reduction(+ : ch)
+    for (int c = 0; c < NC; c++) {
+      if (!boxed[c] || lb[c] != 255 || (legB[c] & L_STALE)) continue;
+      int all = 1;
+      for (uint32_t j = offB[c]; j < offB[c + 1] && all; j++)
+        if (chB[j] < 0 || lw[chB[j]] > n) all = 0;
+      if (all) lb[c] = n, ch++;
+    }
+    if (!ch) break;
+    mx = n;
+  }
+  long cnt[2][2] = {{0}};  // [ladder says draw][tablebase says draw], boxed B positions
+  for (int c = 0; c < NC; c++) {
+    if (!boxed[c]) continue;
+    forbid[c] = lb[c] == 255;
+    cnt[forbid[c]][dB[cfull(c)] == 255]++;
+  }
+  fprintf(stderr, "ladder: boxed B positions: ladder-escape & won %ld, ladder-escape & drawn %ld, "
+          "ladder-draw & won %ld, ladder-draw & drawn %ld; longest escape %d plies\n",
+          cnt[0][0], cnt[0][1], cnt[1][0], cnt[1][1], mx);
+  if (getenv("LADDBG")) {  // print the ladder line from a B position given as a full-board index
+    int c = canon_full(atoi(getenv("LADDBG")));
+    for (int ply = 0; ply < 20; ply++) {
+      CUNPACK(c);
+      fprintf(stderr, "  %c WK %s WQ %s BK %s BR %s  lb=%d lw=%d dB=%d dW=%d\n", ply & 1 ? 'W' : 'B', sq(wk), sq(wq), sq(bk),
+              sq(br), lb[c], lw[c], dB[cfull(c)], dW[cfull(c)]);
+      int nx = G_BAD;
+      if (!(ply & 1)) {
+        if (!boxed[c]) break;
+        int bs = -1;
+        for (uint32_t j = offB[c]; j < offB[c + 1]; j++)
+          if (chB[j] >= 0 && lw[chB[j]] > bs) bs = lw[chB[j]], nx = chB[j];
+      } else {
+        if (!incheck[c]) break;
+        for (uint32_t j = offW[c]; j < offW[c + 1]; j++)
+          if (chW[j] == G_CONV || (chW[j] >= 0 && lb[chW[j]] == lw[c] - 1)) { nx = chW[j]; break; }
+      }
+      if (nx < 0) { fprintf(stderr, "  -> %s\n", nx == G_CONV ? "rook captured into won KQK" : "end"); break; }
+      c = nx;
+    }
+  }
+  free(boxed), free(incheck), free(lb), free(lw);
+}
+
+
 int main(int argc, char **argv) {
   int robust = 0, verbose = 0, a = 1, trace = -1;
   while (a < argc && argv[a][0] == '-') {
     if (argv[a][1] == 'r') robust = 1;
+    if (argv[a][1] == 'f') forbid = calloc(NC, 1), forbid_feat = argv[a][2] == '3' ? -1 : argv[a][2] == '2' ? 25 : 24;
     if (argv[a][1] == 'v') verbose++;
     if (argv[a][1] == 't') trace = atoi(argv[++a]);
     a++;
@@ -93,6 +179,15 @@ int main(int argc, char **argv) {
   for (int c = 0; c < NC; c++) {
     int i = cfull(c);
     dWc[c] = legW[c] ? dW[i] : 255, dBc[c] = legB[c] ? dB[i] : 255;
+  }
+  if (forbid && forbid_feat < 0) ladder();
+  else if (forbid) {
+#pragma omp parallel for schedule(dynamic, 4096)
+    for (int c = 0; c < NC; c++) {
+      if (!legB[c]) continue;
+      CUNPACK(c);
+      forbid[c] = feat(forbid_feat, wk, wq, bk, br, 1);
+    }
   }
   TW = malloc(4L * NC), TB = malloc(4L * NC);
 
@@ -155,8 +250,8 @@ int main(int argc, char **argv) {
       if (pW[c] <= 50) ok50 += m, sum += m * pW[c], sumopt += m * dWc[c];
     }
   }
-  printf("depth=%d%s won=%ld ok50=%ld (%.4f%%) fail=%ld okany=%ld max=%d mean=%.2f (opt %.2f)\n", depth,
-         robust ? " robust" : "", won, ok50, 100.0 * ok50 / won, won - ok50, okany, mx, sum / MAX(ok50, 1),
+  printf("depth=%d%s%s won=%ld ok50=%ld (%.4f%%) fail=%ld okany=%ld max=%d mean=%.2f (opt %.2f)\n", depth,
+         robust ? " robust" : "", forbid ? " forbid" : "", won, ok50, 100.0 * ok50 / won, won - ok50, okany, mx, sum / MAX(ok50, 1),
          sumopt / MAX(ok50, 1));
   if (trace >= 0) {  // play policy vs a defender that avoids policy-won positions, max DTC (canonical frame)
     int c = canon_full(trace);
