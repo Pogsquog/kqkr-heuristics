@@ -1,6 +1,7 @@
 // Shared evaluation features. Needs dW/dB (tablebase) and TBQ declared before inclusion.
 #pragma once
 #include <math.h>
+#include "sym.h"
 // ---- features (all integers; eval = sum w_i f_i, White minimises) ----
 static inline int cdist(int s) { return MAX(3 - F(s), F(s) - 4) + MAX(3 - R(s), R(s) - 4); }  // 0..6
 static inline int edist(int s) { return MIN(MIN(F(s), 7 - F(s)), MIN(R(s), 7 - R(s))); }       // 0..3
@@ -55,23 +56,12 @@ static inline int feat(int k, int wk, int wq, int bk, int br, int stm) {
 }
 // additive lookup-table model written by fit.py (bk canonicalised into a1-d1-d4)
 static float LUT[3 * 640 + 3 * 225];
-static int TSEL[64], TRI[64];
-static inline int tfs(int s, int t) {
-  int f = F(s), r = R(s), x;
-  if (t & 1) f = 7 - f;
-  if (t & 2) r = 7 - r;
-  if (t & 4) x = f, f = r, r = x;
-  return r * 8 + f;
-}
 static void init_lut(void) {
+  init_sym();
   FILE *f = fopen("lut.bin", "rb");
   if (!f) return;
   if (fread(LUT, 4, 3 * 640 + 3 * 225, f)) {}
   fclose(f);
-  int n = 0;
-  for (int s = 0; s < 64; s++) TRI[s] = (F(s) <= 3 && R(s) <= F(s)) ? n++ : -1;
-  for (int s = 0; s < 64; s++)
-    for (int t = 7; t >= 0; t--) if (TRI[tfs(s, t)] >= 0) TSEL[s] = t;
 }
 static inline int rel(int a, int b) { return (F(a) - F(b) + 7) * 15 + (R(a) - R(b) + 7); }
 static inline int lut(int wk, int wq, int bk, int br) {

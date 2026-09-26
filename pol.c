@@ -1,11 +1,12 @@
 // Policy harness: White plays argmin of a depth-d minimax over a linear eval of features;
 // then an exact fixpoint over all positions checks the policy wins against EVERY defence.
+// Runs on the 8-fold symmetry-reduced successor graph (sym.h); results are reported for the full board.
 // usage: ./pol [-r] [-v] depth feat=weight ...   (-r: adversarial tie-breaking, -v: examples)
 #include "kq.h"
 #include <math.h>
 
 uint8_t k3W[N3], k3B[N3], dW[N], dB[N];
-int32_t *TW, *TB;
+int32_t *TW, *TB;  // indexed by canonical compact position (sym.h)
 static int TBQ = 1;
 #define INF 1000000000
 #define MATE (-100000000)
@@ -16,41 +17,38 @@ static int TBQ = 1;
 
 static inline int adjterm(int v) { return v < TERM ? v + 1 : v; }
 
-// value of a white move child
-static inline int wchild(int s, int c3, const int32_t *tb) {
-  if (s == S_CAPR) return k3B[c3] == 255 ? INF : CAPW;
-  return tb[s];
-}
+// value of a white move child (compact B index or G_CONV / G_BAD)
+static inline int wchild(int ch, const int32_t *tb) { return ch >= 0 ? tb[ch] : ch == G_CONV ? CAPW : INF; }
 
 static void sweepB(const int32_t *tw, int32_t *tb) {  // B value = max over black replies
 #pragma omp parallel for schedule(dynamic, 4096)
-  for (int i = 0; i < N; i++) {
-    UNPACK(i);
-    if (!legalB(wk, wq, bk, br)) continue;
-    int out[32], k = gen_black(wk, wq, bk, br, out), v;
-    if (!k) v = bk_in_check(wk, wq, bk, br) ? MATE : INF;
+  for (int c = 0; c < NC; c++) {
+    int f = legB[c], v;
+    if (!f) continue;
+    if (f & L_MATE) v = MATE;
+    else if (f & L_STALE) v = INF;
     else {
       v = -INF;
-      for (int j = 0; j < k; j++) v = MAX(v, out[j] == S_LOSS ? INF : tw[out[j]]);
+      for (uint32_t j = offB[c]; j < offB[c + 1]; j++) v = MAX(v, chB[j] < 0 ? INF : tw[chB[j]]);
     }
-    tb[i] = adjterm(v);
+    tb[c] = adjterm(v);
   }
 }
 static void sweepW(const int32_t *tb, int32_t *tw) {  // W value = min over white moves
 #pragma omp parallel for schedule(dynamic, 4096)
-  for (int i = 0; i < N; i++) {
-    UNPACK(i);
-    if (!legalW(wk, wq, bk, br)) continue;
-    int out[40], cap[40], k = gen_white(wk, wq, bk, br, out, cap), v = INF;
-    for (int j = 0; j < k; j++) v = MIN(v, wchild(out[j], cap[j], tb));
-    tw[i] = adjterm(v);
+  for (int c = 0; c < NC; c++) {
+    if (!legW[c]) continue;
+    int v = INF;
+    for (uint32_t j = offW[c]; j < offW[c + 1]; j++) v = MIN(v, wchild(chW[j], tb));
+    tw[c] = adjterm(v);
   }
 }
 static void leaf(int32_t *t, int stm) {
 #pragma omp parallel for schedule(dynamic, 4096)
-  for (int i = 0; i < N; i++) {
-    UNPACK(i);
-    if (stm ? legalB(wk, wq, bk, br) : legalW(wk, wq, bk, br)) t[i] = eval(wk, wq, bk, br, stm);
+  for (int c = 0; c < NC; c++) {
+    if (!(stm ? legB[c] : legW[c])) continue;
+    CUNPACK(c);
+    t[c] = eval(wk, wq, bk, br, stm);
   }
 }
 
@@ -89,7 +87,14 @@ int main(int argc, char **argv) {
   f = fopen("dtc.bin", "rb");
   if (!f || fread(dW, 1, N, f) != N || fread(dB, 1, N, f) != N) return 1;
   fclose(f);
-  TW = malloc(4L * N), TB = malloc(4L * N);
+  build_graph();
+  uint8_t *dWc = malloc(NC), *dBc = malloc(NC);
+#pragma omp parallel for schedule(static)
+  for (int c = 0; c < NC; c++) {
+    int i = cfull(c);
+    dWc[c] = legW[c] ? dW[i] : 255, dBc[c] = legB[c] ? dB[i] : 255;
+  }
+  TW = malloc(4L * NC), TB = malloc(4L * NC);
 
   // depth-d search tables; root children need TB at depth d-1
   if (depth & 1) leaf(TB, 1);
@@ -98,85 +103,89 @@ int main(int argc, char **argv) {
   // root best value per W position (stored in TW)
   sweepW(TB, TW);
 
-  // fixpoint: pW = white moves to conversion under the policy vs all defences
-  uint8_t *pW = malloc(N), *pB = malloc(N);
-  memset(pW, 255, N), memset(pB, 255, N);
-#pragma omp parallel for schedule(dynamic, 4096)
-  for (int i = 0; i < N; i++) {
-    UNPACK(i);
-    int out[32];
-    if (legalB(wk, wq, bk, br) && !gen_black(wk, wq, bk, br, out) && bk_in_check(wk, wq, bk, br)) pB[i] = 0;
+  // fixpoint: pW = white moves to conversion under the policy vs all defences.
+  // Only still-unresolved positions are kept on the active lists.
+  uint8_t *pW = malloc(NC), *pB = malloc(NC);
+  memset(pW, 255, NC), memset(pB, 255, NC);
+  int32_t *actW = malloc(4L * NC), *actB = malloc(4L * NC);
+  int nW = 0, nB = 0;
+  for (int c = 0; c < NC; c++) {
+    if (legB[c] & L_MATE) pB[c] = 0;
+    else if (dBc[c] != 255) actB[nB++] = c;
+    if (dWc[c] != 255) actW[nW++] = c;
   }
   for (int n = 1; n <= 100; n++) {
     long ch = 0;
-#pragma omp parallel for schedule(dynamic, 4096) reduction(+ : ch)
-    for (int i = 0; i < N; i++) {
-      if (pW[i] != 255 || dW[i] == 255) continue;  // only positions that are theoretically won
-      UNPACK(i);
-      int out[40], cap[40], k = gen_white(wk, wq, bk, br, out, cap);
-      int best = TW[i], okc = 0, badc = 0;
-      for (int j = 0; j < k; j++) {
-        if (adjterm(wchild(out[j], cap[j], TB)) != best) continue;
-        int good = out[j] == S_CAPR ? k3B[cap[j]] != 255 : pB[out[j]] <= n - 1;
+#pragma omp parallel for schedule(dynamic, 1024) reduction(+ : ch)
+    for (int x = 0; x < nW; x++) {
+      int c = actW[x], best = TW[c], okc = 0, badc = 0;
+      for (uint32_t j = offW[c]; j < offW[c + 1]; j++) {
+        int m = chW[j];
+        if (adjterm(wchild(m, TB)) != best) continue;
+        int good = m == G_CONV || (m >= 0 && pB[m] <= n - 1);
         if (good) okc++; else badc++;
-        if (!robust) break;  // deterministic: first best move in generation order
+        if (!robust) break;  // deterministic: first best move in generation order (canonical frame)
       }
-      if (okc && !badc) pW[i] = n, ch++;
+      if (okc && !badc) pW[c] = n, ch++;
     }
-#pragma omp parallel for schedule(dynamic, 4096) reduction(+ : ch)
-    for (int i = 0; i < N; i++) {
-      if (pB[i] != 255 || dB[i] == 255) continue;
-      UNPACK(i);
-      int out[32], k = gen_black(wk, wq, bk, br, out), all = k > 0;
-      for (int j = 0; j < k && all; j++)
-        if (out[j] == S_LOSS || pW[out[j]] > n) all = 0;
-      if (all) pB[i] = n, ch++;
+#pragma omp parallel for schedule(dynamic, 1024) reduction(+ : ch)
+    for (int x = 0; x < nB; x++) {
+      int c = actB[x], all = offB[c + 1] > offB[c];
+      for (uint32_t j = offB[c]; j < offB[c + 1] && all; j++)
+        if (chB[j] < 0 || pW[chB[j]] > n) all = 0;
+      if (all) pB[c] = n, ch++;
     }
     if (!ch) break;
+    int k = 0;
+    for (int x = 0; x < nW; x++) if (pW[actW[x]] == 255) actW[k++] = actW[x];
+    nW = k, k = 0;
+    for (int x = 0; x < nB; x++) if (pB[actB[x]] == 255) actB[k++] = actB[x];
+    nB = k;
   }
-  long won = 0, ok50 = 0, okany = 0, hist[256] = {0};
+  // statistics over the full board: each canonical position counts for its whole symmetry orbit
+  long won = 0, ok50 = 0, okany = 0;
   double sum = 0, sumopt = 0;
   int mx = 0;
-  for (int i = 0; i < N; i++) {
-    if (dW[i] == 255) continue;
-    UNPACK(i);
-    if (!legalW(wk, wq, bk, br)) continue;
-    won++;
-    if (pW[i] != 255) {
-      okany++, hist[pW[i]]++, mx = MAX(mx, pW[i]);
-      if (pW[i] <= 50) ok50++, sum += pW[i], sumopt += dW[i];
+  for (int c = 0; c < NC; c++) {
+    if (dWc[c] == 255) continue;
+    int m = multW[c];
+    won += m;
+    if (pW[c] != 255) {
+      okany += m, mx = MAX(mx, pW[c]);
+      if (pW[c] <= 50) ok50 += m, sum += m * pW[c], sumopt += m * dWc[c];
     }
   }
   printf("depth=%d%s won=%ld ok50=%ld (%.4f%%) fail=%ld okany=%ld max=%d mean=%.2f (opt %.2f)\n", depth,
          robust ? " robust" : "", won, ok50, 100.0 * ok50 / won, won - ok50, okany, mx, sum / MAX(ok50, 1),
          sumopt / MAX(ok50, 1));
-  if (trace >= 0) {  // play policy vs a defender that avoids policy-won positions, max DTC
-    int i = trace;
+  if (trace >= 0) {  // play policy vs a defender that avoids policy-won positions, max DTC (canonical frame)
+    int c = canon_full(trace);
     for (int ply = 0; ply < 60; ply++) {
-      UNPACK(i);
-      printf("%2d. WK %s WQ %s BK %s BR %s  dtc=%d pol=%d val=%d\n", ply + 1, sq(wk), sq(wq), sq(bk), sq(br), dW[i], pW[i], TW[i]);
-      int out[40], cap[40], k = gen_white(wk, wq, bk, br, out, cap), b = -3;
-      for (int j = 0; j < k; j++)
-        if (adjterm(wchild(out[j], cap[j], TB)) == TW[i]) { b = out[j]; break; }
-      if (b < 0) { printf("   -> %s\n", b == S_CAPR ? "captures rook" : "??"); break; }
-      int bo[32], bn = gen_black(b >> 18, (b >> 12) & 63, (b >> 6) & 63, b & 63, bo), best = -1, bs = -1;
-      if (!bn) { printf("   -> mate/stalemate\n"); break; }
-      for (int j = 0; j < bn; j++) {
-        if (bo[j] == S_LOSS) { best = -2; break; }
-        int sc = (pW[bo[j]] == 255 ? 1000 : pW[bo[j]]) * 256 + dW[bo[j]];
-        if (sc > bs) bs = sc, best = bo[j];
+      CUNPACK(c);
+      printf("%2d. WK %s WQ %s BK %s BR %s  dtc=%d pol=%d val=%d\n", ply + 1, sq(wk), sq(wq), sq(bk), sq(br), dWc[c],
+             pW[c], TW[c]);
+      int b = G_BAD;
+      for (uint32_t j = offW[c]; j < offW[c + 1]; j++)
+        if (adjterm(wchild(chW[j], TB)) == TW[c]) { b = chW[j]; break; }
+      if (b < 0) { printf("   -> %s\n", b == G_CONV ? "captures rook" : "??"); break; }
+      if (offB[b + 1] == offB[b]) { printf("   -> mate/stalemate\n"); break; }
+      int best = -1, bs = -1;
+      for (uint32_t j = offB[b]; j < offB[b + 1]; j++) {
+        int w = chB[j];
+        if (w < 0) { best = -2; break; }
+        int sc = (pW[w] == 255 ? 1000 : pW[w]) * 256 + dWc[w];
+        if (sc > bs) bs = sc, best = w;
       }
       if (best == -2) { printf("   -> black wins queen\n"); break; }
-      i = best;
+      c = best;
     }
   }
   if (verbose) {
     int shown = 0;
-    for (int i = 0; i < N && shown < 12; i += 7919) {
-      if (dW[i] == 255 || pW[i] != 255) continue;
-      UNPACK(i);
-      if (!legalW(wk, wq, bk, br)) continue;
-      printf("  fail[%d]: WK %s WQ %s BK %s BR %s (dtc %d)\n", i, sq(wk), sq(wq), sq(bk), sq(br), dW[i]);
+    for (int c = 0; c < NC && shown < 12; c += 7919) {
+      if (dWc[c] == 255 || pW[c] != 255) continue;
+      CUNPACK(c);
+      printf("  fail[%d]: WK %s WQ %s BK %s BR %s (dtc %d)\n", cfull(c), sq(wk), sq(wq), sq(bk), sq(br), dWc[c]);
       shown++;
     }
   }

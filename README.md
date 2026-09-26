@@ -14,16 +14,23 @@ failures. The policies are memoryless: no repetition history.
 | file | purpose |
 |---|---|
 | `kq.h` | geometry, legality, move generation |
+| `sym.h` | 8-fold symmetry reduction and precomputed successor graph over canonical positions |
 | `tb.c` | KQK DTM and KQKR DTC/DTM tablebases (`./tb`, ~20 s; gives max DTC 31, max DTM 35) |
 | `feat.h` | evaluation features |
-| `pol.c` | `./pol [-r] depth feat=w ...`: depth-d minimax on a linear eval, then exact verification (`-r` = every tied best move must also win) |
+| `pol.c` | `./pol [-r] depth feat=w ...`: depth-d minimax on a linear eval, then exact verification (`-r` = every tied best move must also win); runs on the symmetry-reduced graph |
 | `adv.c` | "advice" policy: force a strict drop of a potential V within K moves |
 | `abs.c` | optimal potential over an abstraction (e.g. two-king squares) via greedy level peeling |
 | `tune.py` | coordinate descent on eval weights; objective = exact failure count |
 | `fit.py`, `line.c`, `an*.py` | LUT regression, optimal-line printer, analysis |
 
-Depth-d search over all 16.7M positions costs only d table sweeps (≈0.5 s each), so even
-60-ply searches can be verified over the whole space.
+Build with `make`. `pol` works on canonical positions: the black king is mapped into a1–d1–d4,
+which leaves 2.6M slots instead of 16.7M. It precomputes every successor once, so each search ply
+becomes a gather over the graph (≈8 ms). A 44-ply search plus exact verification takes ≈1 s,
+down from 17 s over the full board. Statistics are still reported over the full board: each
+canonical position is weighted by the size of its symmetry orbit. Robust (`-r`) results are
+identical to the full-board version. Without `-r`, ties are broken by move order in the canonical
+frame. That makes the policy symmetric, but it shifts non-robust counts slightly relative to the
+old full-board tie-break. `adv` and `abs` still sweep the full board.
 
 ## Features (White minimises)
 
@@ -41,7 +48,9 @@ king (Chebyshev/Manhattan), `mob` = legal black king moves.
 | `-7cd + 8kk + 4qk - 3rk - 3rkm + mob + ed` | 7 | **44** | 42 (robust) |
 | additive LUT fit to DTC | 2,595 | >44 (16 failures at 44) | – |
 
-Close misses: 6-term at 44 plies: 140 failures. 7-term at 40 plies: 146 failures with `rk=-4` (99.998%); tuning was stopped there.
+Close misses (non-robust, canonical tie-break): the 6-term eval at 44 plies has 160 failures.
+The 7-term eval has 376 / 168 / 56 failures at 38 / 40 / 42 plies. With `rk=-4` it has 216
+failures at 40 plies; the old full-board tie-break gave 146. Tuning was stopped there.
 
 ## What does *not* work (and why)
 
