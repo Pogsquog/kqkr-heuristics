@@ -64,7 +64,7 @@ int main(int argc, char **argv) {
   int robust = 0, verbose = 0, a = 1, trace = -1;
   while (a < argc && argv[a][0] == '-') {
     if (argv[a][1] == 'r') robust = 1;
-    if (argv[a][1] == 'v') verbose = 1;
+    if (argv[a][1] == 'v') verbose++;
     if (argv[a][1] == 't') trace = atoi(argv[++a]);
     a++;
   }
@@ -182,7 +182,7 @@ int main(int argc, char **argv) {
   }
   if (verbose) {
     int shown = 0;
-    for (int c = 0; c < NC && shown < 12; c += 7919) {
+    for (int c = 0; c < NC && shown < 12; c += verbose > 1 ? 1 : 7919) {
       if (dWc[c] == 255 || pW[c] != 255) continue;
       CUNPACK(c);
       printf("  fail[%d]: WK %s WQ %s BK %s BR %s (dtc %d)\n", cfull(c), sq(wk), sq(wq), sq(bk), sq(br), dWc[c]);

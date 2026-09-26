@@ -21,9 +21,46 @@ static inline int qbox(int wq, int bk) {
   int rw = R(bk) < R(wq) ? R(wq) : R(bk) > R(wq) ? 7 - R(wq) : 8;
   return fw * rw;
 }
+// Defender's options with the rook. A destination t is "safe" if White cannot take the rook there
+// for free: not attacked by the white king or queen, or defended by the black king.
+// which: 0 = legal rook moves, 1 = safe moves, 2 = safe checks, 3 = safe moves attacking the queen, 4 = any checks
+static inline int rookopt(int wk, int wq, int bk, int br, int which) {
+  int n = 0;
+  for (int d = 0; d < 4; d++) {
+    int f = F(br), r = R(br);
+    for (;;) {
+      f += DF[d], r += DR[d];
+      if (f < 0 || f > 7 || r < 0 || r > 7) break;
+      int t = r * 8 + f;
+      if (t == bk || t == wk) break;
+      if (t == wq) { n += which < 2; break; }  // capturing the queen
+      if (qatt(wq, bk, BIT(wk) | BIT(t))) continue;  // rook pinned against the king
+      int safe = adj(bk, t) || (!adj(wk, t) && !qatt(wq, t, BIT(wk) | BIT(bk)));
+      if (which == 0) n++;
+      else if (safe && which == 1) n++;
+      else if (safe && which == 2) n += ratt(t, wk, BIT(wq) | BIT(bk));
+      else if (safe && which == 3) n += ratt(t, wq, BIT(wk) | BIT(bk));
+      else if (which == 4) n += ratt(t, wk, BIT(wq) | BIT(bk));
+    }
+  }
+  return n;
+}
+// squares the black king can reach by king moves through squares not attacked by White (rook blocks the queen)
+static inline int kregion(int wk, int wq, int bk, int br) {
+  uint64_t free = 0;
+  for (int s = 0; s < 64; s++)
+    if (s != wq && s != br && !adj(s, wk) && !qatt(wq, s, BIT(wk) | BIT(br))) free |= BIT(s);
+  uint64_t reg = BIT(bk), prev = 0;
+  while (reg != prev) {
+    prev = reg;
+    for (uint64_t m = reg; m; m &= m - 1) reg |= KATT[__builtin_ctzll(m)] & free;
+  }
+  return __builtin_popcountll(reg) - 1;
+}
 static const char *FNAMES[] = {"cd",  "kk",   "kkm",  "rk",  "qk",   "mob", "ed", "co",
-                               "box", "rkm",  "qkm",  "wkc", "wkcd", "tb",  "rkk", "one", "lut", "kqk", 0};
-enum { NF = 18 };
+                               "box", "rkm",  "qkm",  "wkc", "wkcd", "tb",  "rkk", "one", "lut", "kqk",
+                               "rmob", "rsafe", "rchk", "rqa", "kreg", "bkst", "desp", 0};
+enum { NF = 25 };
 static int W8[NF], USE[NF], nuse;
 
 static inline int lut(int wk, int wq, int bk, int br);
@@ -51,6 +88,15 @@ static inline int feat(int k, int wk, int wq, int bk, int br, int stm) {
       int v = qatt(wq, bk, BIT(wk)) ? k3B[IDX3(wk, wq, bk)] : k3W[IDX3(wk, wq, bk)];
       return v == 255 ? 12 : v;
     }
+    case 18: return rookopt(wk, wq, bk, br, 0);
+    case 19: return rookopt(wk, wq, bk, br, 1);
+    case 20: return rookopt(wk, wq, bk, br, 2);
+    case 21: return rookopt(wk, wq, bk, br, 3);
+    case 22: return kregion(wk, wq, bk, br);
+    case 23: return bkmob(wk, wq, bk, br) == 0;  // black king boxed in
+    case 24:  // desperado rook: king boxed in and the rook is checking or can check (capture = stalemate)
+      return bkmob(wk, wq, bk, br) == 0 && !bk_in_check(wk, wq, bk, br) &&
+             (wk_in_check(wk, wq, bk, br) || rookopt(wk, wq, bk, br, 4) > 0);
   }
   return 0;
 }

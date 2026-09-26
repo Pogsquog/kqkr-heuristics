@@ -38,6 +38,15 @@ old full-board tie-break. `adv` and `abs` still sweep the full board.
 `kk` = king–king Chebyshev distance, `qk`/`qkm` = queen to black king (Chebyshev/Manhattan), `rk`/`rkm` = rook to its own
 king (Chebyshev/Manhattan), `mob` = legal black king moves.
 
+Defender-option features:
+- `rmob`: legal rook moves.
+- `rsafe`: rook moves to squares where White can't take the rook for free.
+- `rchk`: safe rook checks.
+- `rqa`: safe rook moves that attack the queen.
+- `kreg`: squares the black king can reach through unattacked squares.
+- `bkst`: the black king has no moves.
+- `desp`: the black king is boxed in and the rook is checking or can check.
+
 ## Results: search depth needed for 100% (all wins within 50 moves)
 
 | eval | terms | plies for 100% | worst game |
@@ -58,6 +67,27 @@ failures at 40 plies with the 8-term eval above. `4qk - 4qkm` = -4·min(|Δfile|
 the queen and the black king, so it rewards the queen sharing a rank or file with the king. At
 38 plies it has 80 failures. It is not robust to tie-breaking: with `-r` it has 912 failures at
 40 plies and 1,632 at 42.
+
+### Defender-option features (`tune32d.log`, `tune36.log`)
+
+These features help most at shallower depth. On the 8-term eval (scaled ×4), `kreg=-3` alone
+cuts failures at 30 plies from 97,904 to 11,036. The tuner at 32 plies brought failures there
+from 42,176 down to 1,136. Continuing at 36 plies gave this 14-term eval:
+
+`-26cd + 29kk + 16qk - 8qkm - 16rk - 8rkm + 4mob + 3ed + co + box + 3kqk - wkc + rmob - 3kreg`
+
+| plies | 34 | 35 | 36 | 37 | 38 | 40 |
+|---|---|---|---|---|---|---|
+| failures | 1,232 | 222,548 | **8** | 1,160 | 88 | 0 |
+
+Odd depths are much worse. The 8 failures at 36 plies are one symmetry orbit, `WK h8 WQ h7 BK
+a1 BR a4` (DTC 24). There White plays Qc2, which boxes the black king in with no moves. The
+rook then becomes a desperado and checks forever, because taking it is stalemate. No depth
+catches this, since the draw is a repetition, not a terminal. Penalising "king boxed in" (`bkst`)
+or "boxed in and the rook can check" (`desp`) backfires. `desp` fires in 56k won positions for
+every 3k drawn ones, and boxing the king in is also how most mates happen. Any weight large
+enough to matter adds hundreds of thousands of failures. Coordinate descent with both in the
+pool stays at 8.
 
 ## What does *not* work (and why)
 
