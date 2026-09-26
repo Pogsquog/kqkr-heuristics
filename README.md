@@ -35,7 +35,7 @@ old full-board tie-break. `adv` and `abs` still sweep the full board.
 ## Features (White minimises)
 
 `cd` = black king's distance from the centre (0–6), `ed` = its distance to the edge (0–3),
-`kk` = king–king Chebyshev distance, `qk` = queen to black king, `rk`/`rkm` = rook to its own
+`kk` = king–king Chebyshev distance, `qk`/`qkm` = queen to black king (Chebyshev/Manhattan), `rk`/`rkm` = rook to its own
 king (Chebyshev/Manhattan), `mob` = legal black king moves.
 
 ## Results: search depth needed for 100% (all wins within 50 moves)
@@ -46,11 +46,18 @@ king (Chebyshev/Manhattan), `mob` = legal black king moves.
 | mop-up `-10cd + 4kk - 3rk` | 3 | 56 | 38 |
 | `-7cd + 6kk + 4qk - 3rk + mob + 4ed` | 6 | 48 | 42 (robust) |
 | `-7cd + 8kk + 4qk - 3rk - 3rkm + mob + ed` | 7 | **44** | 42 (robust) |
+| `-7cd + 8kk + 4qk - 4qkm - 4rk - 2rkm + mob + ed` | 8 | **40** (canonical tie-break; not robust) | 38 |
 | additive LUT fit to DTC | 2,595 | >44 (16 failures at 44) | – |
 
 Close misses (non-robust, canonical tie-break): the 6-term eval at 44 plies has 160 failures.
 The 7-term eval has 376 / 168 / 56 failures at 38 / 40 / 42 plies. With `rk=-4` it has 216
-failures at 40 plies; the old full-board tie-break gave 146. Tuning was stopped there.
+failures at 40 plies; the old full-board tie-break gave 146.
+
+A rerun of the depth-40 tuner (`tune40.log`, ~1 s per evaluation) added `qkm` and reached 0
+failures at 40 plies with the 8-term eval above. `4qk - 4qkm` = -4·min(|Δfile|, |Δrank|) between
+the queen and the black king, so it rewards the queen sharing a rank or file with the king. At
+38 plies it has 80 failures. It is not robust to tie-breaking: with `-r` it has 912 failures at
+40 plies and 1,632 at 42.
 
 ## What does *not* work (and why)
 
