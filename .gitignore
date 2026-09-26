@@ -1,0 +1,11 @@
+# build outputs
+tb
+pol
+adv
+abs
+line
+# generated tables (regenerate with ./tb and fit.py)
+*.bin
+# scratch logs
+tb.log
+abs_*.log
