@@ -21,6 +21,8 @@ failures. The policies are memoryless: no repetition history.
 | `adv.c` | "advice" policy: force a strict drop of a potential V within K moves |
 | `abs.c` | optimal potential over an abstraction (e.g. two-king squares) via greedy level peeling |
 | `tune.py` | coordinate descent on eval weights; objective = exact failure count |
+| `viewer/` | tablebase explorer (open `viewer/index.html`; build its data with `make viewer`): every move scored by DTM or DTC, optimal play-outs, overlays for the black king's box and the queen's reach |
+| `export.c` | writes the viewer's canonical DTM/DTC + KQK tables |
 | `fit.py`, `line.c`, `an*.py` | LUT regression, optimal-line printer, analysis |
 
 Build with `make`. `pol` works on canonical positions: the black king is mapped into a1–d1–d4,

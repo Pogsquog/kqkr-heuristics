@@ -9,3 +9,6 @@ line
 # scratch logs
 tb.log
 abs_*.log
+export
+# viewer data (regenerate with make viewer)
+viewer/tb.js

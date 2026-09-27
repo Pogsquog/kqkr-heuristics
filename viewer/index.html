@@ -1,0 +1,540 @@
+<title>KQKR Explorer</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,700&family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&family=Noto+Sans+Symbols+2&display=swap">
+<style>
+  :root {
+    --bg: #eceff2; --panel: #fbfcfd; --ink: #18212b; --muted: #5a6977; --line: #d3dae1;
+    --sq-l: #dde5eb; --sq-d: #8a9fb1; --accent: #c4720c; --accent-soft: #c4720c33;
+    --win: #2e7d52; --win-soft: #2e7d5222; --draw: #b23a36; --draw-soft: #b23a3622;
+    --zone: #3f7fd0; --qctl: #c4720c; --sel: #f2c14e;
+    --piece-w: #fdfdfb; --piece-b: #1a1f25; --piece-edge: #1a1f25;
+    --display: "Bricolage Grotesque", "Segoe UI", system-ui, sans-serif;
+    --body: "IBM Plex Sans", system-ui, -apple-system, sans-serif;
+    --mono: "IBM Plex Mono", ui-monospace, "SFMono-Regular", Menlo, monospace;
+    --glyph: "Noto Sans Symbols 2", "Segoe UI Symbol", "DejaVu Sans", serif;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      color-scheme: dark;
+      --bg: #11161b; --panel: #192129; --ink: #e2e8ee; --muted: #93a2b0; --line: #2c3742;
+      --sq-l: #9fb0be; --sq-d: #5a7083; --accent: #f0a23b; --accent-soft: #f0a23b3d;
+      --win: #5cc28a; --win-soft: #5cc28a24; --draw: #ec6f69; --draw-soft: #ec6f6924;
+      --zone: #5d9cf0; --qctl: #f0a23b; --sel: #f2c14e;
+    }
+  }
+  :root[data-theme="dark"] {
+    color-scheme: dark;
+    --bg: #11161b; --panel: #192129; --ink: #e2e8ee; --muted: #93a2b0; --line: #2c3742;
+    --sq-l: #9fb0be; --sq-d: #5a7083; --accent: #f0a23b; --accent-soft: #f0a23b3d;
+    --win: #5cc28a; --win-soft: #5cc28a24; --draw: #ec6f69; --draw-soft: #ec6f6924;
+    --zone: #5d9cf0; --qctl: #f0a23b; --sel: #f2c14e;
+  }
+  body { background: var(--bg); color: var(--ink); font-family: var(--body); font-size: 15px; line-height: 1.5; }
+  .wrap { max-width: 1120px; margin: 0 auto; padding: 20px 16px 40px; }
+  header { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 16px; margin-bottom: 16px; }
+  h1 { font-family: var(--display); font-weight: 700; font-size: 28px; letter-spacing: -0.01em; margin: 0; text-wrap: balance; }
+  header p { margin: 0; color: var(--muted); }
+  .grid { display: grid; grid-template-columns: minmax(0, 560px) minmax(0, 1fr); gap: 20px; align-items: start; }
+  @media (max-width: 860px) { .grid { grid-template-columns: minmax(0, 1fr); } }
+
+  .boardcol { display: flex; flex-direction: column; gap: 10px; }
+  .boardbox { position: relative; width: 100%; max-width: 560px; aspect-ratio: 1; border-radius: 4px; overflow: hidden;
+              box-shadow: 0 1px 0 var(--line), 0 8px 24px #0000001a; }
+  .board { position: absolute; inset: 0; display: grid; grid-template-columns: repeat(8, 1fr); grid-template-rows: repeat(8, 1fr); }
+  .sq { position: relative; border: 0; padding: 0; margin: 0; font: inherit; color: inherit; cursor: pointer;
+        display: flex; align-items: center; justify-content: center; }
+  .sq.l { background: var(--sq-l); } .sq.d { background: var(--sq-d); }
+  .sq:focus-visible { outline: 3px solid var(--accent); outline-offset: -3px; z-index: 2; }
+  .sq .tint { position: absolute; inset: 0; pointer-events: none; }
+  .sq.last .tint { background: #f2c14e55; }
+  .sq.sel .tint { background: #f2c14e99; }
+  .sq.zone::after { content: ""; position: absolute; inset: 0; background: color-mix(in srgb, var(--zone) 34%, transparent); pointer-events: none; }
+  .sq.qc::before { content: ""; position: absolute; width: 18%; aspect-ratio: 1; border-radius: 50%; background: var(--qctl); opacity: .75; pointer-events: none; }
+  .coord { position: absolute; font: 500 10px/1 var(--mono); opacity: .7; pointer-events: none; }
+  .coord.f { right: 4px; bottom: 3px; } .coord.r { left: 4px; top: 4px; }
+  .sq.l .coord { color: var(--sq-d); } .sq.d .coord { color: var(--sq-l); }
+  .pc { position: relative; z-index: 1; font-family: var(--glyph); font-size: min(9.4vw, 54px); line-height: 1; pointer-events: none; user-select: none; }
+  .pc.w { color: var(--piece-w); text-shadow: -1px -1px 0 var(--piece-edge), 1px -1px 0 var(--piece-edge), -1px 1px 0 var(--piece-edge), 1px 1px 0 var(--piece-edge), 0 2px 3px #0005; }
+  .pc.b { color: var(--piece-b); text-shadow: 0 0 1px #fff8, 0 2px 3px #0004; }
+  .tag { position: absolute; z-index: 3; left: 50%; top: 50%; transform: translate(-50%, -50%); pointer-events: none;
+         font: 600 12px/1 var(--mono); padding: 4px 5px; border-radius: 3px; background: var(--panel); color: var(--ink);
+         box-shadow: 0 1px 3px #0004; white-space: nowrap; }
+  .sq:has(.pc) .tag { top: auto; bottom: 3px; transform: translateX(-50%); }
+  .tag.best { background: var(--accent); color: #fff; }
+  .tag.lose { background: var(--draw); color: #fff; }
+  svg.arrows { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; z-index: 4; }
+  .loading { position: absolute; inset: 0; display: grid; place-items: center; z-index: 5; background: #0006; color: #fff; font-weight: 500; }
+
+  .controls { display: flex; flex-wrap: wrap; gap: 8px; }
+  button.btn { font: 500 14px/1 var(--body); color: var(--ink); background: var(--panel); border: 1px solid var(--line);
+               border-radius: 6px; padding: 9px 12px; cursor: pointer; }
+  button.btn:hover { border-color: var(--muted); }
+  button.btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+  button.btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+  button.btn[aria-pressed="true"] { background: var(--ink); color: var(--bg); border-color: var(--ink); }
+  button.btn:disabled { opacity: .45; cursor: default; }
+  .grow { flex: 1; }
+
+  .side { display: flex; flex-direction: column; gap: 14px; min-width: 0; }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 14px; }
+  .eyebrow { font: 600 11px/1 var(--body); text-transform: uppercase; letter-spacing: .08em; color: var(--muted); margin: 0 0 10px; }
+  .verdict { font-family: var(--display); font-weight: 700; font-size: 26px; line-height: 1.15; margin: 0; text-wrap: balance; }
+  .verdict.win { color: var(--win); } .verdict.draw { color: var(--draw); }
+  .subline { margin: 4px 0 0; color: var(--muted); }
+  .chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 12px; }
+  .chip { font: 500 12px/1 var(--mono); padding: 5px 7px; border-radius: 4px; background: var(--bg); color: var(--muted); border: 1px solid var(--line); }
+  .chip b { color: var(--ink); font-weight: 500; }
+
+  .seg { display: inline-flex; border: 1px solid var(--line); border-radius: 6px; overflow: hidden; }
+  .seg button { font: 500 13px/1 var(--body); padding: 7px 10px; border: 0; background: var(--panel); color: var(--muted); cursor: pointer; }
+  .seg button[aria-pressed="true"] { background: var(--ink); color: var(--bg); }
+  .row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; }
+  .row label { display: inline-flex; align-items: center; gap: 6px; cursor: pointer; color: var(--ink); }
+  .swatch { display: inline-block; width: 10px; height: 10px; border-radius: 2px; }
+
+  .moves { list-style: none; margin: 0; padding: 0; display: grid; gap: 2px; max-height: 320px; overflow-y: auto; }
+  .moves button { width: 100%; display: grid; grid-template-columns: 64px 1fr 92px; align-items: center; gap: 10px;
+                  font: 500 14px/1 var(--mono); background: transparent; color: var(--ink); border: 0; border-radius: 4px; padding: 6px 6px; cursor: pointer; text-align: left; }
+  .moves button:hover, .moves button:focus-visible { background: var(--bg); outline: none; }
+  .bar { height: 6px; border-radius: 3px; background: var(--bg); overflow: hidden; }
+  .bar i { display: block; height: 100%; background: var(--win); }
+  .moves .best .bar i { background: var(--accent); }
+  .moves .lose .bar i { background: var(--draw); width: 100% !important; }
+  .moves .v { text-align: right; font-variant-numeric: tabular-nums; color: var(--muted); }
+  .moves .best .v { color: var(--accent); font-weight: 600; }
+  .moves .lose .v { color: var(--draw); }
+
+  .record { font: 400 13px/1.9 var(--mono); display: flex; flex-wrap: wrap; gap: 0 4px; max-height: 150px; overflow-y: auto; }
+  .record .n { color: var(--muted); margin-left: 6px; }
+  .record button { font: inherit; color: var(--ink); background: none; border: 0; padding: 0 3px; border-radius: 3px; cursor: pointer; }
+  .record button.cur { background: var(--accent); color: #fff; }
+  .muted { color: var(--muted); }
+  .setup { display: grid; gap: 10px; }
+  .palette { display: flex; gap: 6px; }
+  .palette button { width: 46px; height: 46px; border-radius: 6px; border: 1px solid var(--line); background: var(--sq-l); cursor: pointer; padding: 0; }
+  .palette button .pc { font-size: 32px; }
+  .palette button[aria-pressed="true"] { outline: 3px solid var(--accent); }
+  .msg { color: var(--draw); margin: 0; }
+  .notes { margin: 0; padding-left: 18px; display: grid; gap: 6px; }
+  .notes li { max-width: 65ch; }
+  kbd { font: 500 12px var(--mono); border: 1px solid var(--line); border-bottom-width: 2px; border-radius: 3px; padding: 0 4px; background: var(--bg); }
+  @media (prefers-reduced-motion: no-preference) { .bar i { transition: width .2s; } }
+</style>
+
+<div class="wrap">
+  <header>
+    <h1>KQKR Explorer</h1>
+    <p>Queen against rook with perfect play from both sides, from the project's own tablebase.</p>
+  </header>
+  <div class="grid">
+    <div class="boardcol">
+      <div class="boardbox">
+        <div class="board" id="board" role="grid" aria-label="Chess board"></div>
+        <svg class="arrows" id="arrows" viewBox="0 0 800 800" aria-hidden="true">
+          <defs>
+            <marker id="hd-best" viewBox="0 0 10 10" refX="5" refY="5" markerWidth="3.2" markerHeight="3.2" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="var(--accent)"/></marker>
+            <marker id="hd-hover" viewBox="0 0 10 10" refX="5" refY="5" markerWidth="3.2" markerHeight="3.2" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="var(--zone)"/></marker>
+          </defs>
+          <g id="arrowlayer"></g>
+        </svg>
+        <div class="loading" id="loading">Unpacking tablebase…</div>
+      </div>
+      <div class="controls">
+        <button class="btn" id="b-start" title="Start (Home)">⏮</button>
+        <button class="btn" id="b-back" title="Back (←)">◀</button>
+        <button class="btn" id="b-fwd" title="Forward (→)">▶</button>
+        <button class="btn" id="b-end" title="End (End)">⏭</button>
+        <button class="btn primary grow" id="b-best" title="Play the best move (Space)">Best move</button>
+        <button class="btn grow" id="b-auto" aria-pressed="false">Play it out</button>
+      </div>
+      <div class="card">
+        <p class="eyebrow">Positions</p>
+        <div class="controls">
+          <button class="btn" id="p-dtm">Longest mate</button>
+          <button class="btn" id="p-dtc">Longest rook hunt</button>
+          <button class="btn" id="p-trap">Stalemate trap</button>
+          <button class="btn" id="p-rand">Random win</button>
+          <button class="btn" id="p-hard">Random hard (DTC ≥ 25)</button>
+          <button class="btn" id="p-draw">Random draw</button>
+          <button class="btn" id="b-setup" aria-pressed="false">Set up</button>
+        </div>
+        <div class="setup" id="setup" hidden>
+          <div class="row">
+            <div class="palette" id="palette"></div>
+            <div class="seg" id="stm-seg"><button data-stm="w" aria-pressed="true">White to move</button><button data-stm="b" aria-pressed="false">Black to move</button></div>
+          </div>
+          <p class="muted" style="margin:0">Pick a piece, then click a square. Click a piece on the board to pick it up.</p>
+          <div class="row"><button class="btn primary" id="setup-done">Done</button><p class="msg" id="setup-msg"></p></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="side">
+      <div class="card" aria-live="polite">
+        <p class="eyebrow" id="stm-label">White to move</p>
+        <p class="verdict" id="verdict">…</p>
+        <p class="subline" id="subline"></p>
+        <div class="chips" id="chips"></div>
+      </div>
+      <div class="card">
+        <div class="row" style="justify-content: space-between; margin-bottom: 10px">
+          <p class="eyebrow" style="margin:0">Moves, best first</p>
+          <div class="seg" id="metric-seg" title="Which count White minimises">
+            <button data-m="dtm" aria-pressed="true">Mate</button><button data-m="dtc" aria-pressed="false">Win rook</button>
+          </div>
+        </div>
+        <ul class="moves" id="moves"></ul>
+      </div>
+      <div class="card">
+        <p class="eyebrow">Show on board</p>
+        <div class="row">
+          <label><input type="checkbox" id="o-best" checked> Best move arrow</label>
+          <label><input type="checkbox" id="o-vals" checked> Move values</label>
+          <label><input type="checkbox" id="o-zone"> <span class="swatch" style="background:var(--zone)"></span> Black king's box</label>
+          <label><input type="checkbox" id="o-q"> <span class="swatch" style="background:var(--qctl);border-radius:50%"></span> Queen's reach</label>
+        </div>
+      </div>
+      <div class="card">
+        <p class="eyebrow">Game</p>
+        <div class="record" id="record"></div>
+      </div>
+      <div class="card">
+        <p class="eyebrow">What to watch for</p>
+        <ul class="notes">
+          <li><b>The box.</b> The queen fences the black king into a shrinking area near an edge. Turn on “Black king's box” and watch it shrink while the white king walks up.</li>
+          <li><b>Rook near its king.</b> A rook far from its king gets forked by a queen check. Black keeps it one step away, so White works to separate them.</li>
+          <li><b>Queen on the king's line.</b> In the tuned heuristic, the queen sharing a rank or file with the black king was one of the strongest signals.</li>
+          <li><b>Stalemate trap.</b> If the black king has no moves, the rook can sacrifice itself with endless checks. Load “Stalemate trap”: Qc2 looks natural but draws.</li>
+          <li><b>Two counts.</b> “Mate” is the fastest mate. “Win rook” is the fastest safe capture of the rook, after which the queen mates alone. Optimal play often looks different under each.</li>
+        </ul>
+        <p class="muted" style="margin:10px 0 0">Click a piece to see every move scored. Numbers count White's moves; Black picks the largest, White the smallest. Keys: <kbd>←</kbd> <kbd>→</kbd> step, <kbd>Space</kbd> best move.</p>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script src="engine.js"></script>
+<script src="tb.js"></script>
+<script>
+(() => {
+  const K = window.KQKR, F = K.F, R = K.R;
+  const $ = id => document.getElementById(id);
+  const sqName = s => 'abcdefgh'[F(s)] + (R(s) + 1);
+  const parse = n => (n.charCodeAt(1) - 49) * 8 + n.charCodeAt(0) - 97;
+  const GLYPH = {K: '♚', Q: '♛', R: '♜'};
+
+  let hist = [], cur = 0, metric = 'dtm', sel = -1, hover = null, timer = null;
+  let setupMode = false, setupPos = null, setupPiece = 'wk';
+  const show = {best: true, vals: true, zone: false, q: false};
+  const pos = () => (setupMode ? setupPos : hist[cur].pos);
+  const effMetric = p => (p.br < 0 ? 'dtm' : metric);
+
+  function pieceAt(p, s) {
+    if (s === p.wk) return {k: 'wk', c: 'w', g: 'K'};
+    if (s === p.wq) return {k: 'wq', c: 'w', g: 'Q'};
+    if (s === p.bk) return {k: 'bk', c: 'b', g: 'K'};
+    if (s === p.br) return {k: 'br', c: 'b', g: 'R'};
+    return null;
+  }
+  function san(p, mv) {
+    const n = mv.next, reply = K.gen(n);
+    const check = n.wq >= 0 && K.inCheck(n);
+    return (mv.piece === 'K' ? 'K' : mv.piece) + (mv.cap ? 'x' : '') + sqName(mv.to) + (check ? (reply.length ? '+' : '#') : '');
+  }
+  function scored(p) {
+    const m = effMetric(p);
+    const ms = K.gen(p).map(mv => ({mv, v: K.moveValue(p, mv, m)}));
+    const w = p.stm === 'w';
+    ms.sort((a, b) => (w ? a.v - b.v : b.v - a.v));
+    const bestV = ms.length ? ms[0].v : 255;
+    for (const x of ms) {
+      x.best = x.v === bestV;
+      x.lose = w ? x.v === 255 : false;
+    }
+    return ms;
+  }
+  function fmt(v, p, long) {
+    if (v === 255) return long ? 'draw' : '=';
+    const m = effMetric(p);
+    return long ? (m === 'dtm' ? `mate in ${v}` : `rook in ${v}`) : (m === 'dtm' ? `#${v}` : `R${v}`);
+  }
+  function status(p) {
+    if (p.wq < 0) return {t: 'Queen lost: draw', c: 'draw', s: 'Black captured the queen.'};
+    const ms = K.gen(p);
+    if (!ms.length) return K.inCheck(p) ? {t: 'Checkmate', c: 'win', s: 'White has won.'} : {t: 'Stalemate: draw', c: 'draw', s: 'Black has no legal move and is not in check.'};
+    const dm = K.value(p, 'dtm'), dc = K.value(p, 'dtc');
+    if (dm === 255) return {t: 'Draw with best play', c: 'draw', s: p.stm === 'w' ? 'No White move wins.' : 'Black has a drawing move.'};
+    const rook = p.br < 0 ? 'The rook is gone; the queen mates alone.' : `The rook falls, or mate comes, within ${dc} move${dc === 1 ? '' : 's'}.`;
+    return {t: `White mates in ${dm}`, c: 'win', s: rook};
+  }
+
+  // ---------- rendering ----------
+  const board = $('board');
+  const cells = [];
+  for (let row = 7; row >= 0; row--)
+    for (let f = 0; f < 8; f++) {
+      const s = row * 8 + f, b = document.createElement('button');
+      b.className = 'sq ' + ((row + f) % 2 ? 'l' : 'd');
+      b.setAttribute('aria-label', sqName(s));
+      b.innerHTML = '<span class="tint"></span>';
+      if (row === 0) b.insertAdjacentHTML('beforeend', `<span class="coord f">${'abcdefgh'[f]}</span>`);
+      if (f === 0) b.insertAdjacentHTML('beforeend', `<span class="coord r">${row + 1}</span>`);
+      b.addEventListener('click', () => clickSq(s));
+      board.appendChild(b);
+      cells[s] = b;
+    }
+
+  function arrow(from, to, kind) {
+    const x1 = F(from) * 100 + 50, y1 = (7 - R(from)) * 100 + 50, x2 = F(to) * 100 + 50, y2 = (7 - R(to)) * 100 + 50;
+    const len = Math.hypot(x2 - x1, y2 - y1), sh = 30 / len;
+    const col = kind === 'best' ? 'var(--accent)' : 'var(--zone)';
+    return `<line x1="${x1 + (x2 - x1) * sh * 0.6}" y1="${y1 + (y2 - y1) * sh * 0.6}" x2="${x2 - (x2 - x1) * sh}" y2="${y2 - (y2 - y1) * sh}" stroke="${col}" stroke-width="16" stroke-linecap="round" opacity=".85" marker-end="url(#hd-${kind})"/>`;
+  }
+
+  function render() {
+    const p = pos();
+    const ms = setupMode ? [] : scored(p);
+    const last = !setupMode && cur > 0 ? hist[cur].mv : null;
+    const zone = show.zone && p.wq >= 0 ? K.blackZone(p) : new Set();
+    const qc = show.q ? K.queenControl(p) : new Set();
+    const targets = new Map();
+    if (sel >= 0) for (const x of ms) if (x.mv.from === sel) targets.set(x.mv.to, x);
+    for (let s = 0; s < 64; s++) {
+      const c = cells[s], pc = pieceAt(p, s);
+      c.classList.toggle('last', !!last && (s === last.from || s === last.to));
+      c.classList.toggle('sel', s === sel);
+      c.classList.toggle('zone', zone.has(s));
+      c.classList.toggle('qc', qc.has(s) && !pc);
+      c.querySelectorAll('.pc,.tag').forEach(e => e.remove());
+      if (pc) c.insertAdjacentHTML('beforeend', `<span class="pc ${pc.c}">${GLYPH[pc.g]}</span>`);
+      const t = targets.get(s);
+      if (t && show.vals) c.insertAdjacentHTML('beforeend', `<span class="tag ${t.best ? 'best' : t.lose ? 'lose' : ''}">${fmt(t.v, p)}</span>`);
+      c.setAttribute('aria-label', sqName(s) + (pc ? ' ' + (pc.c === 'w' ? 'white ' : 'black ') + {K: 'king', Q: 'queen', R: 'rook'}[pc.g] : ''));
+    }
+    let a = '';
+    if (show.best && ms.length && !setupMode) a += arrow(ms[0].mv.from, ms[0].mv.to, 'best');
+    if (hover) a += arrow(hover.from, hover.to, 'hover');
+    $('arrowlayer').innerHTML = a;
+
+    if (setupMode) { renderSetup(); return; }
+    const st = status(p);
+    $('stm-label').textContent = (p.stm === 'w' ? 'White' : 'Black') + ' to move' + (cur ? ` · after ${Math.ceil(cur / 2)} move${cur > 2 ? 's' : ''}` : '');
+    $('verdict').textContent = st.t;
+    $('verdict').className = 'verdict ' + st.c;
+    $('subline').textContent = st.s;
+    const chips = [];
+    if (p.wq >= 0) {
+      chips.push(`box <b>${K.blackZone(p).size}</b> sq`);
+      chips.push(`kings <b>${K.cheb(p.wk, p.bk)}</b> apart`);
+      if (p.br >= 0) chips.push(`rook–king <b>${K.cheb(p.br, p.bk)}</b>`);
+      const dm = K.value(p, 'dtm'), dc = K.value(p, 'dtc');
+      chips.push(`DTM <b>${dm === 255 ? '–' : dm}</b>`);
+      if (p.br >= 0) chips.push(`DTC <b>${dc === 255 ? '–' : dc}</b>`);
+    }
+    $('chips').innerHTML = chips.map(c => `<span class="chip">${c}</span>`).join('');
+
+    const wins = ms.filter(x => x.v !== 255).map(x => x.v);
+    const top = Math.max(1, ...wins);
+    $('moves').innerHTML = ms.length ? ms.map((x, i) => {
+      const w = x.v === 255 ? 100 : p.stm === 'w' ? 100 * (1 - (x.v - 1) / (top + 1)) : 100 * x.v / top;
+      return `<li class="${x.best ? 'best' : ''} ${x.lose ? 'lose' : ''}"><button data-i="${i}"><span>${san(p, x.mv)}</span><span class="bar"><i style="width:${Math.max(4, w)}%"></i></span><span class="v">${fmt(x.v, p, true)}</span></button></li>`;
+    }).join('') : '<li class="muted">No moves: the game is over.</li>';
+    $('moves').querySelectorAll('button').forEach(b => {
+      const x = ms[+b.dataset.i];
+      b.onclick = () => play(x.mv);
+      b.onmouseenter = b.onfocus = () => { hover = x.mv; renderArrowsOnly(); };
+      b.onmouseleave = b.onblur = () => { hover = null; renderArrowsOnly(); };
+    });
+
+    let r = '';
+    const startB = hist[0].pos.stm === 'b';
+    for (let i = 1; i < hist.length; i++) {
+      const whiteMove = hist[i - 1].pos.stm === 'w', num = Math.floor((i + (startB ? 1 : 0) + 1) / 2);
+      if (whiteMove) r += `<span class="n">${num}.</span>`;
+      else if (i === 1) r += `<span class="n">${num}…</span>`;
+      r += `<button data-i="${i}" class="${i === cur ? 'cur' : ''}">${hist[i].san}</button>`;
+    }
+    $('record').innerHTML = r || '<span class="muted">No moves yet. Click a piece, or press Best move.</span>';
+    $('record').querySelectorAll('button').forEach(b => (b.onclick = () => go(+b.dataset.i)));
+    const curBtn = $('record').querySelector('.cur');
+    if (curBtn) curBtn.scrollIntoView({block: 'nearest'});
+    $('b-back').disabled = $('b-start').disabled = cur === 0;
+    $('b-fwd').disabled = $('b-end').disabled = cur === hist.length - 1;
+    $('b-best').disabled = !ms.length;
+  }
+  function renderArrowsOnly() {
+    const p = pos(), ms = setupMode ? [] : scored(p);
+    let a = '';
+    if (show.best && ms.length && !setupMode) a += arrow(ms[0].mv.from, ms[0].mv.to, 'best');
+    if (hover) a += arrow(hover.from, hover.to, 'hover');
+    $('arrowlayer').innerHTML = a;
+  }
+
+  // ---------- game actions ----------
+  function load(p) {
+    stop();
+    hist = [{pos: p}], cur = 0, sel = -1, hover = null;
+    render();
+  }
+  function play(mv) {
+    const p = pos();
+    hist = hist.slice(0, cur + 1);
+    hist.push({pos: mv.next, mv, san: san(p, mv)});
+    cur++, sel = -1, hover = null;
+    render();
+  }
+  function go(i) { cur = Math.max(0, Math.min(hist.length - 1, i)), sel = -1, hover = null; render(); }
+  function best() {
+    const ms = scored(pos());
+    if (!ms.length) return false;
+    play(ms[0].mv);
+    return true;
+  }
+  function stop() {
+    if (timer) clearInterval(timer), (timer = null);
+    $('b-auto').setAttribute('aria-pressed', 'false');
+    $('b-auto').textContent = 'Play it out';
+  }
+  function auto() {
+    if (timer) return stop();
+    $('b-auto').setAttribute('aria-pressed', 'true');
+    $('b-auto').textContent = 'Stop';
+    const step = () => { if (!best() || !K.gen(pos()).length) stop(); };
+    step();
+    if (K.gen(pos()).length) timer = setInterval(step, 650);
+  }
+  function clickSq(s) {
+    if (setupMode) return setupClick(s);
+    stop();
+    const p = pos(), pc = pieceAt(p, s);
+    if (sel >= 0) {
+      const mv = K.gen(p).find(m => m.from === sel && m.to === s);
+      if (mv) return play(mv);
+    }
+    sel = pc && pc.c === p.stm && s !== sel ? s : -1;
+    render();
+  }
+
+  // ---------- positions ----------
+  const rndT = () => Math.floor(Math.random() * 8);
+  let lists = null;
+  function buildLists() {
+    const T = K.tables(), out = {win: [], hard: [], maxM: 0, maxC: 0, cM: 0, cC: 0};
+    for (let c = 0; c < K.NC; c++) {
+      const v = T.dtm[c];
+      if (v === 255) continue;
+      out.win.push(c);
+      if (T.dtc[c] >= 25) out.hard.push(c);
+      if (v > out.maxM) out.maxM = v, out.cM = c;
+      if (T.dtc[c] > out.maxC) out.maxC = T.dtc[c], out.cC = c;
+    }
+    return out;
+  }
+  const fromC = c => ({...K.uncanon(c), stm: 'w'});
+  const pick = arr => K.transform(fromC(arr[Math.floor(Math.random() * arr.length)]), rndT());
+  function randomDraw() {
+    for (;;) {
+      const p = {wk: rnd64(), wq: rnd64(), bk: rnd64(), br: rnd64(), stm: 'w'};
+      if (K.legal(p) && K.value(p, 'dtm') === 255) return p;
+    }
+  }
+  const rnd64 = () => Math.floor(Math.random() * 64);
+  const P = (wk, wq, bk, br, stm = 'w') => ({wk: parse(wk), wq: parse(wq), bk: parse(bk), br: parse(br), stm});
+
+  // ---------- setup ----------
+  const PAL = [['wk', 'w', 'K'], ['wq', 'w', 'Q'], ['bk', 'b', 'K'], ['br', 'b', 'R']];
+  $('palette').innerHTML = PAL.map(([k, c, g]) => `<button data-k="${k}" aria-label="${c === 'w' ? 'White' : 'Black'} ${{K: 'king', Q: 'queen', R: 'rook'}[g]}"><span class="pc ${c}">${GLYPH[g]}</span></button>`).join('');
+  $('palette').querySelectorAll('button').forEach(b => (b.onclick = () => { setupPiece = b.dataset.k; renderSetup(); }));
+  $('stm-seg').querySelectorAll('button').forEach(b => (b.onclick = () => { setupPos.stm = b.dataset.stm; renderSetup(); }));
+  function renderSetup() {
+    $('palette').querySelectorAll('button').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.k === setupPiece)));
+    $('stm-seg').querySelectorAll('button').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.stm === setupPos.stm)));
+    $('stm-label').textContent = 'Setting up';
+    $('verdict').textContent = 'Place the pieces';
+    $('verdict').className = 'verdict';
+    $('subline').textContent = 'The table covers every legal position with these four pieces.';
+    $('chips').innerHTML = '';
+    $('moves').innerHTML = '';
+  }
+  function setupClick(s) {
+    const p = setupPos, pc = pieceAt(p, s);
+    if (pc) { setupPiece = pc.k; sel = s; }
+    else { p[setupPiece] = s; sel = -1; }
+    $('setup-msg').textContent = '';
+    render();
+  }
+  function toggleSetup(on) {
+    stop();
+    setupMode = on;
+    $('setup').hidden = !on;
+    $('b-setup').setAttribute('aria-pressed', String(on));
+    sel = -1, hover = null;
+    if (on) {
+      const p = hist[cur].pos;
+      setupPos = {...p};
+      if (setupPos.br < 0) setupPos.br = [0, 7, 56, 63].find(s => !pieceAt(p, s));
+      if (setupPos.wq < 0) setupPos.wq = [63, 56, 7, 0].find(s => !pieceAt(setupPos, s));
+    }
+    render();
+  }
+  $('setup-done').onclick = () => {
+    const p = setupPos;
+    if (!K.legal(p)) {
+      $('setup-msg').textContent = p.stm === 'w' ? 'Not legal with White to move: the black king is in check, the kings touch, or two pieces share a square.'
+                                                 : 'Not legal with Black to move: the white king is in check, the kings touch, or two pieces share a square.';
+      return;
+    }
+    setupMode = false;
+    $('setup').hidden = true;
+    $('b-setup').setAttribute('aria-pressed', 'false');
+    load({...p});
+  };
+
+  // ---------- wiring ----------
+  $('b-start').onclick = () => { stop(); go(0); };
+  $('b-back').onclick = () => { stop(); go(cur - 1); };
+  $('b-fwd').onclick = () => { stop(); go(cur + 1); };
+  $('b-end').onclick = () => { stop(); go(hist.length - 1); };
+  $('b-best').onclick = () => { stop(); best(); };
+  $('b-auto').onclick = auto;
+  $('b-setup').onclick = () => toggleSetup(!setupMode);
+  $('metric-seg').querySelectorAll('button').forEach(b => (b.onclick = () => {
+    metric = b.dataset.m;
+    $('metric-seg').querySelectorAll('button').forEach(x => x.setAttribute('aria-pressed', String(x === b)));
+    render();
+  }));
+  for (const [id, key] of [['o-best', 'best'], ['o-vals', 'vals'], ['o-zone', 'zone'], ['o-q', 'q']])
+    $(id).onchange = e => { show[key] = e.target.checked; render(); };
+  document.addEventListener('keydown', e => {
+    if (setupMode || e.target.closest('input, .seg')) return;
+    if (e.key === 'ArrowLeft') stop(), go(cur - 1);
+    else if (e.key === 'ArrowRight') stop(), go(cur + 1);
+    else if (e.key === 'Home') stop(), go(0);
+    else if (e.key === 'End') stop(), go(hist.length - 1);
+    else if (e.key === ' ' && !e.target.closest('button')) { e.preventDefault(); stop(); best(); }
+    else return;
+  });
+  const needLists = fn => () => { if (setupMode) toggleSetup(false); lists = lists || buildLists(); fn(); };
+  $('p-dtm').onclick = needLists(() => load(fromC(lists.cM)));
+  $('p-dtc').onclick = needLists(() => load(fromC(lists.cC)));
+  $('p-rand').onclick = needLists(() => load(pick(lists.win)));
+  $('p-hard').onclick = needLists(() => load(pick(lists.hard)));
+  $('p-draw').onclick = () => { if (setupMode) toggleSetup(false); load(randomDraw()); };
+  $('p-trap').onclick = () => { if (setupMode) toggleSetup(false); load(P('h8', 'h7', 'a1', 'a4')); };
+
+  // ---------- boot ----------
+  hist = [{pos: P('h8', 'h7', 'a1', 'a4')}];
+  (async () => {
+    try {
+      const bin = Uint8Array.from(atob(window.KQKR_TB), ch => ch.charCodeAt(0));
+      const stream = new Blob([bin]).stream().pipeThrough(new DecompressionStream('gzip'));
+      K.setTables(new Uint8Array(await new Response(stream).arrayBuffer()));
+      $('loading').hidden = true;
+      render();
+    } catch (err) {
+      $('loading').textContent = 'The tablebase could not be unpacked in this browser (' + err.message + ').';
+    }
+  })();
+})();
+</script>
