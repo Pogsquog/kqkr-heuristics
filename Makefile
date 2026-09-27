@@ -1,5 +1,5 @@
 CFLAGS = -O3 -march=native -fopenmp -Wall
-PROGS = tb pol adv abs line export
+PROGS = tb pol adv abs line export strat
 
 all: $(PROGS)
 %: %.c kq.h feat.h sym.h

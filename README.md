@@ -23,6 +23,7 @@ failures. The policies are memoryless: no repetition history.
 | `tune.py` | coordinate descent on eval weights; objective = exact failure count |
 | `viewer/` | tablebase explorer (open `viewer/index.html`; build its data with `make viewer`): every move scored by DTM or DTC, optimal play-outs, overlays for the black king's box and the queen's reach |
 | `export.c` | writes the viewer's canonical DTM/DTC + KQK tables |
+| `strat.c` | strategy analysis: kinds of optimal move, and whether the black king's region can be kept from growing |
 | `fit.py`, `line.c`, `an*.py` | LUT regression, optimal-line printer, analysis |
 
 Build with `make`. `pol` works on canonical positions: the black king is mapped into a1–d1–d4,
@@ -48,6 +49,7 @@ Defender-option features:
 - `kreg`: squares the black king can reach through unattacked squares.
 - `bkst`: the black king has no moves.
 - `desp`: the black king is boxed in and the rook is checking or can check.
+- `kbox`: squares the black king can reach through squares not attacked by the queen and white king, ignoring the rook.
 
 ## Results: search depth needed for 100% (all wins within 50 moves)
 
@@ -132,6 +134,37 @@ Re-tuning at 36 plies with `-f3` gives:
 
 Without the ladder rule the same weights have 224 failures at 36 plies. With `-r` there are 576,
 so the result depends on tie-breaking. A tuner pass at 34 plies stalled at 232 failures.
+
+### Strategy analysis: "restrict the king" (`strat.c`)
+
+This tests a rule-based strategy:
+- play the obvious tactics first (fork, take);
+- then pick a king advance, a rook attack or a king attack, whichever restricts the black king more;
+- occasionally make a holding queen move;
+- avoid configurations where a chain of rook checks ends in a pin.
+
+Kinds of DTC-optimal move, as the share of won positions where at least one optimal move is of that kind:
+
+| DTC | king move | queen check | queen attacks rook | quiet queen move (only kind optimal) |
+|---|---|---|---|---|
+| 3–9 | 19.6% | 75.8% | 4.6% | 6.9% (3.4%) |
+| 10–19 | 63.0% | 32.4% | 6.6% | 12.7% (5.9%) |
+| 20–31 | 71.0% | 31.3% | 11.1% | 18.5% (4.4%) |
+
+Holding moves are rarely the only choice, but when they are, nothing else wins.
+
+Whether White can stop the black king's region from growing depends on how the region is measured:
+
+| measure | moves allowed | DTC 10–19: shrinks / same / must grow | DTC 20–31: shrinks / same / must grow |
+|---|---|---|---|
+| `kreg` (rook blocks queen lines) | optimal | 33.1 / 8.9 / 58.1% | 33.6 / 7.0 / 59.4% |
+| `kreg` | any winning | 61.7 / 8.4 / 29.9% | 60.9 / 6.7 / 32.3% |
+| `kbox` (ignores the rook) | optimal | 53.6 / 26.0 / 20.4% | 56.7 / 28.7 / 14.6% |
+| `kbox` | any winning | 80.2 / 16.8 / **3.0%** | 80.7 / 16.3 / **3.1%** |
+
+Each cell is the change in region size, worst case over Black's replies, for the best allowed move. So the right box is the one the queen and white king draw, ignoring the rook: a rook interposition makes the king look freer when it isn't. Some winning move keeps `kbox` from growing in about 97% of positions. The "same" column (about 16%) is the plateau, where holding or regrouping moves happen.
+
+As a measure of progress, though, the box fails. Searches minimising `kbox` verify 41% at depth 2 and 66% at depth 8. With `adv` (force V down within K ≤ 4 moves), `kbox` alone and with `kk`, `rk`, `qkm` or `mob` tie-breakers all verify about 41%, which is roughly the positions already won by a quick tactic. The failures pile up at the bottom levels. Even with the king completely boxed (`kbox` = 0), winning the rook can take up to 28 moves, and 15% of those positions need 10 or more. So "restrict the king" is a sound first phase. The second phase, winning the rook once the box is tight while it checks and shadows its king, needs its own measure of progress. The natural next step is to classify the positions stuck at the bottom levels.
 
 ## What does *not* work (and why)
 

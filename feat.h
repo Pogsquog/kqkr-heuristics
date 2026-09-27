@@ -57,6 +57,18 @@ static inline int kregion(int wk, int wq, int bk, int br) {
   }
   return __builtin_popcountll(reg) - 1;
 }
+// same, but the rook does not block the queen: the box drawn by the queen and white king alone
+static inline int kbox(int wk, int wq, int bk) {
+  uint64_t free = 0;
+  for (int s = 0; s < 64; s++)
+    if (s != wq && !adj(s, wk) && !qatt(wq, s, BIT(wk))) free |= BIT(s);
+  uint64_t reg = BIT(bk), prev = 0;
+  while (reg != prev) {
+    prev = reg;
+    for (uint64_t m = reg; m; m &= m - 1) reg |= KATT[__builtin_ctzll(m)] & free;
+  }
+  return __builtin_popcountll(reg) - 1;
+}
 // Stricter desperado test (black to move, king boxed in): the rook has a check on a square where
 // no White capture of it reaches a won KQK (capture impossible, or every capture draws).
 static inline int desp2(int wk, int wq, int bk, int br) {
@@ -80,8 +92,8 @@ static inline int desp2(int wk, int wq, int bk, int br) {
 }
 static const char *FNAMES[] = {"cd",  "kk",   "kkm",  "rk",  "qk",   "mob", "ed", "co",
                                "box", "rkm",  "qkm",  "wkc", "wkcd", "tb",  "rkk", "one", "lut", "kqk",
-                               "rmob", "rsafe", "rchk", "rqa", "kreg", "bkst", "desp", "desp2", 0};
-enum { NF = 26 };
+                               "rmob", "rsafe", "rchk", "rqa", "kreg", "bkst", "desp", "desp2", "kbox", 0};
+enum { NF = 27 };
 static int W8[NF], USE[NF], nuse;
 
 static inline int lut(int wk, int wq, int bk, int br);
@@ -119,6 +131,7 @@ static inline int feat(int k, int wk, int wq, int bk, int br, int stm) {
       return bkmob(wk, wq, bk, br) == 0 && !bk_in_check(wk, wq, bk, br) &&
              (wk_in_check(wk, wq, bk, br) || rookopt(wk, wq, bk, br, 4) > 0);
     case 25: return stm == 1 && desp2(wk, wq, bk, br);
+    case 26: return kbox(wk, wq, bk);
   }
   return 0;
 }
