@@ -4,6 +4,7 @@ pol
 adv
 abs
 line
+strat
 # generated tables (regenerate with ./tb and fit.py)
 *.bin
 # scratch logs
